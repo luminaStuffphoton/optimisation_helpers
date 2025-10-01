@@ -3,12 +3,8 @@ local cellSize = 300 / (drawSize)
 
 -- Note: all costs are in thousands of credits
 -- Note: all heat values are in thousands of heat
+
 local params = {
-	costs = {
-		turret = 16 + 4*0.65 + 0.1, -- HRT Turret, including crew and doors
-		amp = 4.5 + 0.25, -- Amplifiers, including doors and half a heatpipe
-		dila = 5 + 0.4, -- Dilators, including doors and a heatpipe
-	},
 	power = {
 		turret = 1.75,
 		amp = 0.4,
@@ -21,14 +17,32 @@ local params = {
 	},
 	ampBase = 1.1,
 	dilaBase = 0.5,
-	minOverload = 0,
 	dilaUtil = 1,
 	baseHeat = 2.25,
 	dilaHeat = 1.4, -- hardcoded from simulations. 100% dialation means 1400 more heat/s
+
+	tilecost = 0,
+	heatCost = nil, -- set in regenerateCosts()
+	powerCost = nil, -- set in regenerateCosts()
+
+	minOverload = 0,
 	sustain = 1,
-	heatCost = 10 / 1100,
-	powerCost = 5.5, -- hardcoded, refer to reactor spreadsheet
 }
+
+
+local function regenerateCosts()
+	params.costs = {
+		turret = 16  + 16*params.tilecost + 4*0.65 + 0.1, -- HRT Turret, including crew and doors
+		amp    = 4.5 +  4*params.tilecost + 0.35,         -- Amplifier, including doors, half a heatpipe and a walkway
+		dila   = 5   +  6*params.tilecost + 0.6,          -- Dilator, including doors, a heatpipe and two walkways
+	}
+	params.heatCost = (10 + 3*params.tilecost) / 1100
+	params.powerCost = (50 + 9*params.tilecost + 1400*params.heatCost) / 11.25 -- Cost of 1 battery/s from an OCMR
+			+ 1.88 * (0.7 + 2/3 * params.tilecost) -- Crew cost to deliver it 3 tiles through double walkway
+end
+
+regenerateCosts()
+
 love.window.setMode(1200, 800)
 love.keyboard.setKeyRepeat(true)
 love.window.setTitle("Cosmo Heat Ray Turret Optimiser")
@@ -86,6 +100,7 @@ local highestOutputSetup
 local distMoved = 0
 local mouseDown
 local selectedCell
+local advOpts
 
 local maxEfficency = 0
 
@@ -184,7 +199,7 @@ local function drawCell(drawX, drawY, entry)
 	love.graphics.setColor(1, 1, 1)
 	love.graphics.printf(entry.amp.." Amps\n"
 			..entry.dila.." Dilators\n$"
-			..math.floor(entry.cost+0.5).."k cost\n"
+			..math.floor(entry.cost+0.5).."k\n"
 			..(math.floor(entry.heat*100 + 0.5) / 100).." GW\n"
 			..(math.floor(entry.efficency * 1000 + 0.5)).." kW/$",
 			drawX+5, drawY+5, 100/1.2, "left", 0, 1.2, 1.2)
@@ -199,9 +214,15 @@ end
 function love.keypressed(key, isrepeat)
 	infoDone = false
 	if     key == "q" then
-		wantedCost = wantedCost + 10
+		if advOpts then
+			params.tilecost = params.tilecost + 0.01
+			regenerateCosts()
+		else wantedCost = wantedCost + 10 end
 	elseif key == "a" then
-		wantedCost = math.max(wantedCost - 10, 0)
+		if advOpts then
+			params.tilecost = math.max(params.tilecost - 0.01, 0)
+			regenerateCosts()
+		else wantedCost = math.max(wantedCost - 10, 0) end
 	elseif key == "w" then
 		params.sustain = math.min(params.sustain + 0.05, 1)
 	elseif key == "s" then
@@ -217,6 +238,12 @@ function love.keypressed(key, isrepeat)
 	elseif key == "x" then
 		selectedCell = highestValueSetup
 		centerSetup(highestValueSetup)
+		infoDone = true
+	elseif key == "1" then
+		advOpts = false
+		infoDone = true
+	elseif key == "2" then
+		advOpts = true
 		infoDone = true
 	else
 		infoDone = true
@@ -282,16 +309,24 @@ function love.draw()
 	love.graphics.rectangle("fill", 800, 0, 400, 800)
 
 	local info = "== Information =="
-			.."\nThe menu on the right shows all the resonance lance setups that will fit into the allocated budget. Click-and-drag in order to scroll through the avalible options. The setups are sorted horizontally by number of turrets and vertically by their cost."
+			.."\nThe menu on the right shows all the resonance lance setups that will fit into the allocated budget. Click-and-drag in order to scroll through the avalible options. The setups are sorted vertically by their cost."
 			.."\n\nSetups are colour coded by efficency, with red representing worse efficecy and green representing best efficency."
 			.."\n\nThe setup shaded in purple is the best setup in terms of heat/s within your allocated budget. The setup outlined in cyan is the best setup in terms of pure efficecy, but may not fit neatly under your budget. A setup is shaded in blue if it is both best heat/s and best efficecy."
 			.."\n\n== Parameters =="
+	if not advOpts then info = info
+			.."\nPress 2 to view advanced options"
 			.."\n\tBudget: $"..wantedCost.."k"
 			.."\n\t\t(Increase with Q, decrease with A)"
 			.."\n\tSustain: "..math.floor(params.sustain*100 + 0.5).."%"
 			.."\n\t\t(Increase with W, decrease with S)"
 			.."\n\tMin Shield Overload: "..math.floor(params.minOverload*100 + 0.5).."%"
 			.."\n\t\t(Increase with E, decrease with D)"
+	else info = info
+			.."\nPress 1 to view basic options"
+			.."\n\tVolume Penalty: $"..math.floor(params.tilecost*1000+0.5)..""
+			.."\n\t\t(Increase with Q, decrease with A)"
+	end
+	if infoValid then info = info
 			.."\n\n== Selected Setup =="
 			.."\nThe setup outlined in yellow is the selected setup."
 				..(selectedCell.bestOutput and " You have selected the best heat/s setup." or "")
@@ -301,10 +336,11 @@ function love.draw()
 			.."\n\nThe selected setup:"
 			.."\n\tCosts $"..math.floor(selectedCell.cost * selectedCell.mult).."k for all copies"
 			.."\n\tUses "..(math.floor(getPower(selectedCell) * 10 + 0.5) / 10).." batteries/s per copy"
-			.."\n\tGenerates "..(math.floor(getHeat(selectedCell) * 10 + 0.5) / 10).."k heat/s for all copies"
+			.."\n\tGenerates "..(math.floor(getHeat(selectedCell) * 10 + 0.5) / 10).." heat/s for all copies"
 			.."\n\tAfflicts "..(math.floor(getOverload(selectedCell) * 100 + 0.5)).."% shield overload"
 			.."\n\nPress Z to jump to the best setup in terms of heat/s within budget."
 			.."\nPress X to jump to the best setup in terms of efficency."
+	end
 
 
 	love.graphics.setColor(1, 1, 1)
